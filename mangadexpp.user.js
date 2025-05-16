@@ -99,7 +99,6 @@ function getFormat(pathname) {
 (function() {
     "use strict";
     main();
-    handle_queue();
 })();
 
 function main() {
@@ -573,7 +572,8 @@ function blockUsers(format) {
             }
         }
         for (var i = 0; i < toRemove.length; i++) {
-            document.querySelector(".page-container > div:nth-child(2)").removeChild(toRemove[i]);
+            var allChildren = document.querySelectorAll(".page-container > div");
+            allChildren[allChildren.length - 1].removeChild(toRemove[i]);
         }
     }
 
