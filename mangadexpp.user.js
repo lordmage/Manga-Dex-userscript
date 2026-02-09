@@ -1,191 +1,198 @@
 // ==UserScript==
-// @name         MangaDex++ Enhanced
+// @name         MangaDex++ Enhanced v1.0.7
 // @namespace    https://github.com/MangaDexPP/userscript
-// @version      1.0.6
-// @description  Enhanced QOL features for MangaDex with stable controls and filtering
+// @version      1.0.7
+// @description  Enhanced QOL features for MangaDex with stable controls and filtering - Optimized
 // @match        https://mangadex.org/*
 // @match        http://mangadex.org/*
 // @icon         https://icons.duckduckgo.com/ip2/www.mangadex.org.ico
 // @grant        none
 // ==/UserScript==
 
-(function () {
-  "use strict";
+//------------------------------------------------//
+//------------------CONFIGURABLE------------------//
+//------------------------------------------------//
 
-  /* ================= CONFIG / STATE ================= */
-  const READ_BUTTON_COLOR = "#13ab493d";
-  const IGNORE_BUTTON_COLOR = "#ab13133d";
-  const UNMARKED_BUTTON_COLOR = "#4242cd3d";
-  const HIDE_ALL_READ_BUTTON_COLOR = "#ff80003d";
-  const SETTINGS_BUTTON_COLOR = "#6b72803d";
+//-------------------UNIVERSAL--------------------//
+const POLLING_TIME = 100;
+const API_REQUEST_INTERVAL = 1000;
 
-  const DOES_HIDE_ALL_READ = true;
+//--------------------TRACKER---------------------//
+const READ_BUTTON_COLOR = "#13ab493d";
+const IGNORE_BUTTON_COLOR = "#ab13133d";
+const UNMARKED_BUTTON_COLOR = "#4242cd3d";
+const HIDE_ALL_READ_BUTTON_COLOR = "#ff80003d";
 
-  let hideRead = false;
-  let hideIgnore = true;
-  let hideUnmarked = false;
-  let hideAllRead = true;
+//-----------------HIDE ALL READ------------------//
+const DOES_HIDE_ALL_READ = true;
 
-  const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+//------------------BLOCK USERS-------------------//
+const USER_LIST = [];
+const GROUP_LIST = [];
+const TAG_LIST = ["boys' love"]; // IMPORTANT: Use all lowercase
 
-  /* ================ UTILITIES ================ */
-  function extractIdFromHref(href) {
+//------------------------------------------------//
+//------------------DO NOT TOUCH------------------//
+//------------------------------------------------//
+let hideRead = false;
+let hideIgnore = true;
+let hideUnmarked = false;
+let hideAllRead = true;
+let forceRecheckNewEntry = false;
+let queue = [];
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+const CATEGORY_FEED = "/titles/feed";
+const CATEGORY_FOLLOWS = "/titles/follows";
+const CATEGORY_HISTORY = "/my/history";
+const CATEGORY_ALL = "/titles";
+const CATEGORY_RECENT = "/titles/recent";
+const CATEGORY_LATEST = "/titles/latest";
+const CATEGORY_AUTHOR = "/author/";
+const CATEGORY_GROUP = "/group/";
+const CATEGORY_TITLE = "/title/";
+const CATEGORY_TAGS = "/tag/";
+
+const FORMAT_NOT_FOUND = 0;
+const FORMAT_LIST = 1;
+const FORMAT_THUMBNAIL = 2;
+const FORMAT_DETAIL = 3;
+
+// ================ ENHANCED UTILITIES ================
+function extractIdFromHref(href) {
     if (!href) return null;
+    
+    // First try UUID pattern
     const m = href.match(UUID_RE);
     if (m) return m[0];
-    const parts = href.split("/");
-    for (const p of parts) if (p && p.length >= 10) return p;
-    return null;
-  }
-
-  /* ================ EXPORT / IMPORT ================ */
-  function exportLocalStorage() {
+    
+    // Try to extract from URL path
     try {
-      const data = JSON.stringify(localStorage, null, 2);
-      const blob = new Blob([data], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "mangadexpp-localstorage.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch (e) {
-      console.error("Export failed", e);
-      alert("Export failed — see console.");
-    }
-  }
-
-  function importLocalStorage() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "application/json";
-    input.onchange = e => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const r = new FileReader();
-      r.onload = () => {
-        try {
-          const parsed = JSON.parse(r.result);
-          Object.entries(parsed).forEach(([k, v]) => localStorage.setItem(k, v));
-          alert("Import complete. Refresh if needed.");
-        } catch (err) {
-          console.error("Import failed", err);
-          alert("Invalid JSON file.");
+        // Parse URL
+        const url = new URL(href);
+        const pathParts = url.pathname.split('/');
+        
+        // Look for 'title' in path and get next segment
+        const titleIndex = pathParts.indexOf('title');
+        if (titleIndex !== -1 && titleIndex + 1 < pathParts.length) {
+            const potentialId = pathParts[titleIndex + 1];
+            // Return if it's not empty
+            if (potentialId && potentialId.trim() !== '') {
+                return potentialId;
+            }
         }
-      };
-      r.readAsText(f);
-    };
-    document.body.appendChild(input);
-    input.click();
-    input.remove();
-  }
+        
+        // Fallback: look for any non-empty path segment that's not a common word
+        const commonWords = ['title', 'chapter', 'manga', 'tag', 'group', 'user', 'settings', 'login', 'register'];
+        for (const part of pathParts) {
+            if (part && part.trim() !== '' && !commonWords.includes(part.toLowerCase())) {
+                return part;
+            }
+        }
+    } catch (e) {
+        // If URL parsing fails, fall back to original logic but skip domains
+        const parts = href.split("/");
+        for (const p of parts) {
+            // Skip common domains and protocol parts
+            if (p && p.length >= 1 && !p.includes('http') && !p.includes('www.') && !p.includes('.org') && !p.includes('.com')) {
+                return p;
+            }
+        }
+    }
+    
+    return null;
+}
 
-  /* ================ SETTINGS COG ================ */
-  function createSettingsCog() {
-    const wrapper = document.createElement("div");
-    wrapper.style.position = "relative";
-    wrapper.classList.add("mangadexpp-settings-container");
+function getFormat(pathname) {
+    if (pathname.startsWith(CATEGORY_TITLE)) {
+        return FORMAT_DETAIL;
+    }
+    if (pathname.startsWith(CATEGORY_GROUP)) {
+        return FORMAT_LIST;
+    }
+    if (pathname.startsWith(CATEGORY_AUTHOR)) {
+        return FORMAT_THUMBNAIL;
+    }
+    if (pathname.startsWith(CATEGORY_TAGS)) {
+        return FORMAT_THUMBNAIL;
+    }
+    switch (pathname) {
+        case CATEGORY_FEED:
+            return FORMAT_LIST;
+        case CATEGORY_FOLLOWS:
+            return FORMAT_THUMBNAIL;
+        case CATEGORY_HISTORY:
+            return FORMAT_LIST;
+        case CATEGORY_ALL:
+            return FORMAT_THUMBNAIL;
+        case CATEGORY_RECENT:
+            return FORMAT_THUMBNAIL;
+        case CATEGORY_LATEST:
+            return FORMAT_LIST;
+        default:
+            return FORMAT_NOT_FOUND;
+    }
+}
 
-    const btn = document.createElement("input");
-    btn.type = "button";
-    btn.value = "⚙";
-    btn.title = "MangaDex++ Settings";
-    btn.style.padding = "0 0.8em";
-    btn.style.marginLeft = "6px";
-    btn.style.borderRadius = "4px";
-    btn.style.backgroundColor = SETTINGS_BUTTON_COLOR;
-    btn.style.cursor = "pointer";
-
-    const menu = document.createElement("div");
-    menu.style.display = "none";
-    menu.style.position = "absolute";
-    menu.style.top = "110%";
-    menu.style.left = "0";
-    menu.style.background = "#1a1a1a";
-    menu.style.border = "1px solid #333";
-    menu.style.borderRadius = "6px";
-    menu.style.zIndex = "999999";
-    menu.style.minWidth = "200px";
-    menu.style.padding = "8px";
-    menu.style.boxSizing = "border-box";
-    menu.style.color = "#eee";
-
-    // Prevent clicks inside the menu from bubbling to document
-    menu.addEventListener("click", e => e.stopPropagation());
-
-    // Data section
-    const dataTitle = document.createElement("div");
-    dataTitle.textContent = "Data";
-    dataTitle.style.fontWeight = "700";
-    dataTitle.style.marginBottom = "6px";
-    menu.appendChild(dataTitle);
-
-    const exBtn = document.createElement("button");
-    exBtn.textContent = "Export Data";
-    exBtn.style.width = "100%";
-    exBtn.style.marginBottom = "6px";
-    exBtn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); exportLocalStorage(); });
-    menu.appendChild(exBtn);
-
-    const imBtn = document.createElement("button");
-    imBtn.textContent = "Import Data";
-    imBtn.style.width = "100%";
-    imBtn.style.marginBottom = "6px";
-    imBtn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); importLocalStorage(); });
-    menu.appendChild(imBtn);
-
-    // click outside closes the menu; click inside prevented above
-    document.addEventListener("click", e => {
-      if (!menu.contains(e.target) && e.target !== btn) {
-        menu.style.display = "none";
-      }
-    });
-
-    // toggle open/close
-    btn.addEventListener("click", e => {
-      e.preventDefault();
-      e.stopPropagation();
-      menu.style.display = menu.style.display === "block" ? "none" : "block";
-    });
-
-    wrapper.appendChild(btn);
-    wrapper.appendChild(menu);
-    return wrapper;
-  }
-
-  // ================ PER-TITLE CONTROLS ================
-function createControlsRow(entryID) {
+// ================ PER-TITLE CONTROLS ================
+function createControlsRow(entryID, format) {
     const row = document.createElement("div");
     row.className = "mangadexpp-controls";
-    row.style.marginTop = "6px";
     row.style.display = "flex";
     row.style.gap = "6px";
+    row.style.marginTop = "6px";
+    
+    // Fix: Always use flex-start for left alignment in all formats
     row.style.justifyContent = "flex-start";
-    row.style.flexDirection = "row";
 
-    // prevent navigation when clicking buttons
-    row.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); return false; });
-
-    function mk(label, cls, cb) {
-      const b = document.createElement("input");
-      b.type = "button";
-      b.value = label;
-      b.className = cls;
-      b.setAttribute("entryid", entryID);
-      b.style.padding = "0 8px";
-      b.style.borderRadius = "4px";
-      b.style.cursor = "pointer";
-      b.style.background = "transparent";
-      b.style.fontSize = "18px"; // Smaller font for dense cards
-      b.style.minWidth = "70px"; // Ensure consistent button width
-      b.addEventListener("click", e => {
+    row.addEventListener("click", e => {
         e.preventDefault();
         e.stopPropagation();
-        cb(entryID);
-        applyFilters();
         return false;
-      });
-      return b;
+    });
+
+    function mk(label, cls, cb) {
+        const b = document.createElement("input");
+        b.type = "button";
+        b.value = label;
+        b.className = cls;
+        b.setAttribute("entryid", entryID);
+        b.style.padding = "2px 6px"; // Optimized padding
+        b.style.borderRadius = "3px"; // Slightly smaller radius
+        b.style.cursor = "pointer";
+        b.style.background = "transparent";
+        b.style.fontSize = "14px"; // Optimized font size
+        b.style.minWidth = "70px";
+        b.style.height = "28px";
+        b.style.lineHeight = "24px"; // Fixed line-height (was 10px)
+        b.style.boxSizing = "border-box";
+        b.style.whiteSpace = "nowrap";
+        b.style.fontFamily = "inherit";
+        b.style.fontWeight = "500";
+        b.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+        b.style.transition = "all 0.15s ease";
+        b.addEventListener("click", e => {
+            e.preventDefault();
+            e.stopPropagation();
+            cb(entryID);
+            applyFilters();
+            return false;
+        });
+
+        // Add hover effect
+        b.addEventListener("mouseenter", () => {
+            b.style.opacity = "0.9";
+            b.style.transform = "translateY(-1px)";
+            b.style.boxShadow = "0 2px 4px rgba(0,0,0,0.2)";
+        });
+        b.addEventListener("mouseleave", () => {
+            b.style.opacity = "1";
+            b.style.transform = "translateY(0)";
+            b.style.boxShadow = "none";
+        });
+
+        return b;
     }
 
     row.appendChild(mk("Read", "mangadexpp-read", id => localStorage.setItem(id, "1")));
@@ -193,207 +200,436 @@ function createControlsRow(entryID) {
     row.appendChild(mk("Clear", "mangadexpp-clear", id => localStorage.removeItem(id)));
 
     return row;
-  }
+}
 
-  /* ================ INSERTION HELPERS (support all card types) ================ */
-  function getCandidateContainerForAnchor(a) {
-    return (
-      a.closest(".chapter-feed__container") ||
-      a.closest(".manga-card") ||
-      a.closest(".md-card") ||
-      a.closest(".group.md-card") ||
-      a.closest(".card") ||
-      a.closest("li") ||
-      a.closest("article") ||
-      a.parentElement
-    );
-  }
-
-  function insertControlsUnderTitleForAnchor(a) {
+function insertControlsForMangaCard(card, format) {
     try {
-      if (a.closest(".mangadexpp-controls")) return;
-      const href = a.getAttribute("href") || a.href || "";
-      const id = extractIdFromHref(href);
-      if (!id) return;
-      const cont = getCandidateContainerForAnchor(a);
-      if (!cont) return;
-      if (cont.querySelector(`.mangadexpp-controls input[entryid="${id}"]`)) return;
-
-      // Check if this is a dense manga card
-      const isDenseCard = cont.classList.contains("manga-card") && cont.classList.contains("dense");
-
-      const title =
-        cont.querySelector(".chapter-feed__title") ||
-        cont.querySelector(".title") ||
-        cont.querySelector("a[href*='/title/']") ||
-        a;
-
-      const controls = createControlsRow(id);
-
-      if (isDenseCard) {
-        // For dense cards, insert controls after the cover image or in a better position
-        const cover = cont.querySelector(".manga-card-cover");
-        if (cover) {
-          // Insert after the cover but before the title/content
-          cover.parentNode.insertBefore(controls, cover.nextSibling);
+        // Find the title link in the manga card
+        const titleLink = card.querySelector("a[href*='/title/']");
+        if (!titleLink) return;
+        
+        const href = titleLink.getAttribute("href") || titleLink.href || "";
+        const id = extractIdFromHref(href);
+        if (!id) return;
+        
+        // Check if controls already exist
+        if (card.querySelector(`.mangadexpp-controls input[entryid="${id}"]`)) return;
+        
+        // Find where to insert controls - look for status or body
+        const status = card.querySelector(".status");
+        const body = card.querySelector(".manga-card-body");
+        
+        const controls = createControlsRow(id, format);
+        
+        if (status) {
+            // Insert after status
+            status.parentNode.insertBefore(controls, status.nextSibling);
+        } else if (body) {
+            // Append to body
+            body.appendChild(controls);
         } else {
-          // Fallback: insert after title
-          try { title.parentNode.insertBefore(controls, title.nextSibling); }
-          catch { cont.appendChild(controls); }
+            // Append to card as fallback
+            card.appendChild(controls);
         }
-      } else {
-        // For regular cards, insert after title as before
-        try { title.parentNode.insertBefore(controls, title.nextSibling); }
-        catch { cont.appendChild(controls); }
-      }
     } catch (e) {
-      // ignore
+        console.debug("Control insertion failed for manga card:", e);
     }
-  }
+}
 
-  function addControlsToAll() {
-    Array.from(document.querySelectorAll("a[href*='/title/']")).forEach(a => {
-      if (a.closest("nav") || a.closest("header") || a.closest(".mangadexpp-settings-container")) return;
-      insertControlsUnderTitleForAnchor(a);
-    });
-  }
+function insertControlsForFeedContainer(container, format) {
+    try {
+        const titleLink = container.querySelector(".chapter-feed__title");
+        if (!titleLink) return;
+        
+        const href = titleLink.getAttribute("href") || titleLink.href || "";
+        const id = extractIdFromHref(href);
+        if (!id) return;
+        
+        if (container.querySelector(`.mangadexpp-controls input[entryid="${id}"]`)) return;
+        
+        const titleContainer = titleLink.parentElement;
+        const controls = createControlsRow(id, format);
+        
+        // For feed format, insert after the title
+        if (titleContainer) {
+            titleContainer.appendChild(controls);
+        } else {
+            container.appendChild(controls);
+        }
+    } catch (e) {
+        console.debug("Control insertion failed for feed:", e);
+    }
+}
 
-  /* ================ FEED UNREAD DETECTION (Hide-All-Read) ================ */
-  function hasUnreadChaptersInFeedContainer(container) {
+function addControlsToAll(format) {
+    // Handle manga cards (thumbnail format)
+    if (format === FORMAT_THUMBNAIL) {
+        document.querySelectorAll(".manga-card, .md-card, .group.md-card").forEach(card => {
+            insertControlsForMangaCard(card, format);
+        });
+    }
+    // Handle feed containers (list format)
+    else if (format === FORMAT_LIST) {
+        document.querySelectorAll(".chapter-feed__container").forEach(container => {
+            insertControlsForFeedContainer(container, format);
+        });
+    }
+}
+
+// ================ FEED UNREAD DETECTION ================
+function hasUnreadChaptersInFeedContainer(container) {
     const list = container.querySelector(".chapter-feed__chapters-list");
-    if (!list) return null; // can't tell
+    if (!list) return null;
     const unread = list.querySelector(".readMarker:not(.opacity-40)");
     return !!unread;
-  }
+}
 
-  function hideAllReadFeed() {
+function hideAllReadFeed() {
     if (!DOES_HIDE_ALL_READ) return;
     document.querySelectorAll(".chapter-feed__container").forEach(cont => {
-      if (cont.closest(".layout-container")) { cont.style.display = ""; return; }
-      if (!hideAllRead) {
-        if (cont.hasAttribute("feed-allread-hide")) { cont.removeAttribute("feed-allread-hide"); cont.style.display = ""; }
-        return;
-      }
-      const unread = hasUnreadChaptersInFeedContainer(cont);
-      if (unread === null) return; // skip containers we can't determine
-      const allRead = unread === false;
-      if (allRead) { cont.style.display = "none"; cont.setAttribute("feed-allread-hide", "true"); }
-      else { if (cont.hasAttribute("feed-allread-hide")) { cont.removeAttribute("feed-allread-hide"); cont.style.display = ""; } }
+        if (cont.closest(".layout-container")) {
+            cont.style.display = "";
+            return;
+        }
+        if (!hideAllRead) {
+            if (cont.hasAttribute("feed-allread-hide")) {
+                cont.removeAttribute("feed-allread-hide");
+                cont.style.display = "";
+            }
+            return;
+        }
+        const unread = hasUnreadChaptersInFeedContainer(cont);
+        if (unread === null) return;
+        const allRead = unread === false;
+        if (allRead) {
+            cont.style.display = "none";
+            cont.setAttribute("feed-allread-hide", "true");
+        } else {
+            if (cont.hasAttribute("feed-allread-hide")) {
+                cont.removeAttribute("feed-allread-hide");
+                cont.style.display = "";
+            }
+        }
     });
-  }
+}
 
-  /* ================ FILTER LOGIC (safe unmarked) ================ */
-  function syncColors(row, flag) {
+// ================ FILTER LOGIC ================
+function syncColors(row, flag) {
     try {
-      const readBtn = row.querySelector(".mangadexpp-read");
-      const ignoreBtn = row.querySelector(".mangadexpp-ignore");
-      if (readBtn) readBtn.style.background = flag === "1" ? READ_BUTTON_COLOR : "transparent";
-      if (ignoreBtn) ignoreBtn.style.background = flag === "-1" ? IGNORE_BUTTON_COLOR : "transparent";
-    } catch (e) {}
-  }
+        const readBtn = row.querySelector(".mangadexpp-read");
+        const ignoreBtn = row.querySelector(".mangadexpp-ignore");
+        if (readBtn) readBtn.style.background = flag === "1" ? READ_BUTTON_COLOR : "transparent";
+        if (ignoreBtn) ignoreBtn.style.background = flag === "-1" ? IGNORE_BUTTON_COLOR : "transparent";
+    } catch (e) { }
+}
 
-  function isMangaContainer(cont) {
-    if (!cont) return false;
-    return !!(
-      cont.closest(".chapter-feed__container") ||
-      cont.closest(".manga-card") ||
-      cont.closest(".md-card") ||
-      cont.closest(".group.md-card")
-    );
-  }
-
-  function applyFilters() {
-    // hide duplicate top control bars
-    document.querySelectorAll(".controls").forEach((c, i) => { if (i > 0) c.style.display = "none"; });
+function applyFilters() {
+    // Hide duplicate top control bars
+    document.querySelectorAll(".controls").forEach((c, i) => {
+        if (i > 0) c.style.display = "none";
+    });
 
     document.querySelectorAll(".mangadexpp-controls").forEach(row => {
-      const inp = row.querySelector("input[entryid]");
-      if (!inp) return;
-      const id = inp.getAttribute("entryid");
-      const flag = localStorage.getItem(id);
+        const inp = row.querySelector("input[entryid]");
+        if (!inp) return;
+        const id = inp.getAttribute("entryid");
+        const flag = localStorage.getItem(id);
 
-      const cont =
-        row.closest(".chapter-feed__container") ||
-        row.closest(".manga-card") ||
-        row.closest(".md-card") ||
-        row.closest(".group.md-card") ||
-        row.closest(".card") ||
-        row.closest("li") ||
-        row.closest("article") ||
-        row.parentElement;
+        const cont = row.closest(".chapter-feed__container") ||
+                     row.closest(".manga-card") ||
+                     row.closest(".md-card") ||
+                     row.closest(".group.md-card") ||
+                     row.closest(".card") ||
+                     row.closest("li") ||
+                     row.closest("article");
 
-      if (!cont) return;
+        if (!cont) return;
 
-      // Never hide content on title detail pages
-      if (cont.closest(".layout-container")) {
+        // Never hide content on title detail pages
+        if (cont.closest(".layout-container")) {
+            syncColors(row, flag);
+            cont.style.display = "";
+            return;
+        }
+
+        let shouldHide = false;
+        if (flag === "1") shouldHide = hideRead;
+        else if (flag === "-1") shouldHide = hideIgnore;
+        else shouldHide = hideUnmarked;
+
+        cont.style.display = shouldHide ? "none" : "";
         syncColors(row, flag);
-        cont.style.display = "";
-        return;
-      }
-
-      let shouldHide = false;
-      if (flag === "1") shouldHide = hideRead;
-      else if (flag === "-1") shouldHide = hideIgnore;
-      else shouldHide = hideUnmarked && isMangaContainer(cont);
-
-      cont.style.display = shouldHide ? "none" : "";
-      syncColors(row, flag);
     });
 
-    // apply feed-only hide-all-read (chapter-marker based)
+    // Apply feed-only hide-all-read
     hideAllReadFeed();
-  }
+}
 
-  /* ================ TOP CONTROLS (no duplicates) ================ */
-  function addTopControls() {
+// ================ TOP CONTROLS ================
+function addTopControls() {
     const allControls = document.querySelectorAll(".controls");
     if (!allControls || allControls.length === 0) return;
     const controls = allControls[0];
     if (controls.classList.contains("mangadexpp-has-controls")) return;
     controls.classList.add("mangadexpp-has-controls");
-    for (let i = 1; i < allControls.length; i++) try { allControls[i].style.display = "none"; } catch(e) {}
+    for (let i = 1; i < allControls.length; i++) try {
+        allControls[i].style.display = "none";
+    } catch (e) { }
+
     function mk(label, get, set, color, cb) {
-      const b = document.createElement("input");
-      b.type = "button"; b.value = label;
-      b.style.padding = "0 1em"; b.style.marginLeft = "6px"; b.style.borderRadius = "4px";
-      b.style.cursor = "pointer"; b.style.backgroundColor = get() ? color : "transparent";
-      b.addEventListener("click", () => {
-        const v = !get();
-        set(v);
-        b.style.backgroundColor = v ? color : "transparent";
-        applyFilters();
-        if (typeof cb === "function") cb();
-      });
-      return b;
+        const b = document.createElement("input");
+        b.type = "button";
+        b.value = label;
+        b.style.padding = "0 0.8em"; // Optimized padding
+        b.style.marginLeft = "6px";
+        b.style.borderRadius = "3px"; // Smaller radius
+        b.style.cursor = "pointer";
+        b.style.backgroundColor = get() ? color : "transparent";
+        b.style.fontSize = "14px"; // Optimized font size
+        b.style.height = "28px";
+        b.style.lineHeight = "28px"; // Fixed line-height (was not set)
+        b.style.boxSizing = "border-box";
+        b.style.fontFamily = "inherit";
+        b.style.fontWeight = "500";
+        b.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+        b.style.transition = "all 0.15s ease";
+        b.addEventListener("click", () => {
+            const v = !get();
+            set(v);
+            b.style.backgroundColor = v ? color : "transparent";
+            applyFilters();
+            if (typeof cb === "function") cb();
+        });
+
+        // Add hover effect to match
+        b.addEventListener("mouseenter", () => {
+            b.style.opacity = "0.9";
+            b.style.transform = "translateY(-1px)";
+            b.style.boxShadow = "0 2px 4px rgba(0,0,0,0.2)";
+        });
+        b.addEventListener("mouseleave", () => {
+            b.style.opacity = "1";
+            b.style.transform = "translateY(0)";
+            b.style.boxShadow = "none";
+        });
+
+        return b;
     }
+
     controls.appendChild(mk("Toggle Read", () => hideRead, v => hideRead = v, READ_BUTTON_COLOR));
     controls.appendChild(mk("Toggle Ignore", () => hideIgnore, v => hideIgnore = v, IGNORE_BUTTON_COLOR));
     controls.appendChild(mk("Toggle Unmarked", () => hideUnmarked, v => hideUnmarked = v, UNMARKED_BUTTON_COLOR));
     if (DOES_HIDE_ALL_READ) controls.appendChild(mk("Hide All Read?", () => hideAllRead, v => hideAllRead = v, HIDE_ALL_READ_BUTTON_COLOR, hideAllReadFeed));
-    const cog = createSettingsCog(); cog.classList.add("mangadexpp-settings-cog");
-    controls.appendChild(cog);
-  }
+}
 
-  /* ================ RUNNER & OBSERVER ================ */
-  function runOnce() {
+// ================ ORIGINAL FUNCTIONALITY ================
+function blockUsers(format) {
+    if (format == FORMAT_LIST) {
+        // Completely remove chapter listing if all blocked
+        var chapters = document.querySelectorAll(".chapter-feed__container");
+        var toRemove = [];
+        for (var i = 0; i < chapters.length; i++) {
+            if (chapters[i].querySelectorAll(".chapter-grid.flex-grow").length == 0) {
+                toRemove.push(chapters[i]);
+            }
+        }
+        for (var i = 0; i < toRemove.length; i++) {
+            var allChildren = document.querySelectorAll(".page-container > div");
+            allChildren[allChildren.length - 1].removeChild(toRemove[i]);
+        }
+    }
+
+    // Should work for both chapter listing in feeds and in manga page
+    var chapterRows = document.querySelectorAll(".chapter-grid.flex-grow");
+    for (var i = 0; i < chapterRows.length; i++) {
+        var row = chapterRows[i];
+        var uploader = row.querySelector(".user-tag > .line-clamp-1");
+        if ((uploader != null && USER_LIST.includes(uploader.innerText)) || GROUP_LIST.includes(row.querySelector(".group-tag").innerText)) {
+            row.parentNode.parentNode.removeChild(row.parentNode);
+        }
+    }
+}
+
+function checkPage(entryID) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', "https://api.mangadex.org/manga/" + entryID, true);
+    xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            var metadata = JSON.parse(xhr.responseText);
+            parseAndHandleEntry(entryID, metadata);
+        } else {
+            console.error('Failed to fetch entry ' + entryID + ' with status ' + xhr.status);
+        }
+    };
+    xhr.onerror = function () {
+        console.error('Failed to fetch entry ' + entryID);
+    };
+    xhr.send();
+}
+
+function parseAndHandleEntry(entryID, metadata) {
+    if (metadata["result"] != "ok") {
+        console.error('Failed to fetch entry ' + entryID);
+        return;
+    }
+    var tags = metadata["data"]["attributes"]["tags"];
+    for (var i = 0; i < tags.length; i++) {
+        var tag = tags[i]["attributes"]["name"]["en"].toLowerCase();
+        // Blacklisted tag
+        if (TAG_LIST.includes(tag)) {
+            console.log("Ignore " + entryID + " due to blacklisted tag: " + tag);
+            window.localStorage.setItem(entryID, -1);
+            return;
+        }
+    }
+    // Checked, but do nothing about it
+    window.localStorage.setItem(entryID, -2);
+}
+
+function handle_queue() {
+    if (queue.length > 0) {
+        var entryID = queue.shift();
+        console.debug("Popped ID " + entryID);
+        checkPage(entryID);
+    }
+    setTimeout(handle_queue, API_REQUEST_INTERVAL);
+}
+
+function main() {
+    var lastTagList = window.localStorage.getItem("_conf_tags");
+    var currentTagList = TAG_LIST.toLocaleString();
+    if (lastTagList != currentTagList) {
+        forceRecheckNewEntry = true;
+        window.localStorage.setItem("_conf_tags", currentTagList);
+    }
+    handleBaseUrl(window.location.href);
+    setTimeout(main, POLLING_TIME);
+}
+
+function handleBaseUrl(baseUrl) {
+    var url = new URL(baseUrl);
+    var format = getFormat(url.pathname);
+
+    blockUsers(format);
+    if (format === FORMAT_NOT_FOUND) {
+        return;
+    }
+
     addTopControls();
-    addControlsToAll();
+    addControlsToAll(format);
     applyFilters();
-  }
+}
 
-  let scheduled = false;
-  function scheduleRun() {
-    if (scheduled) return;
-    scheduled = true;
-    setTimeout(() => {
-      scheduled = false;
-      try { runOnce(); } catch (e) { console.error(e); }
-    }, 150);
-  }
+// ================ OPTIMIZED MUTATION OBSERVER ================
+// Optimized scheduling with debouncing and throttling
+let scheduled = false;
+let lastRunTime = 0;
+const MIN_RUN_INTERVAL = 100; // Minimum 100ms between runs
+const DEBOUNCE_DELAY = 50; // Wait 50ms after last mutation before running
 
-  new MutationObserver(scheduleRun).observe(document.body, { childList: true, subtree: true });
+let debounceTimer = null;
+let mutationCount = 0;
+const MAX_MUTATIONS_BEFORE_IMMEDIATE = 10; // If many mutations happen, run immediately
 
-  // kickoff
-  scheduleRun();
+function scheduleRun() {
+    // Count this mutation
+    mutationCount++;
+    
+    // Clear any existing debounce timer
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+    }
+    
+    const now = Date.now();
+    const timeSinceLastRun = now - lastRunTime;
+    
+    // If we've had many mutations in quick succession, run immediately
+    if (mutationCount >= MAX_MUTATIONS_BEFORE_IMMEDIATE) {
+        if (!scheduled) {
+            scheduled = true;
+            mutationCount = 0;
+            setTimeout(() => {
+                scheduled = false;
+                lastRunTime = Date.now();
+                try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
+            }, 0);
+        }
+        return;
+    }
+    
+    // If enough time has passed since last run, schedule immediately
+    if (timeSinceLastRun >= MIN_RUN_INTERVAL && !scheduled) {
+        scheduled = true;
+        mutationCount = 0;
+        setTimeout(() => {
+            scheduled = false;
+            lastRunTime = Date.now();
+            try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
+        }, 0);
+        return;
+    }
+    
+    // Otherwise, debounce and wait for mutations to settle
+    debounceTimer = setTimeout(() => {
+        if (!scheduled) {
+            scheduled = true;
+            mutationCount = 0;
+            setTimeout(() => {
+                scheduled = false;
+                lastRunTime = Date.now();
+                try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
+            }, 0);
+        }
+    }, DEBOUNCE_DELAY);
+}
 
+// Optimized MutationObserver configuration
+const observer = new MutationObserver((mutations) => {
+    // Check if mutations are relevant (add nodes or change attributes)
+    const hasRelevantMutations = mutations.some(mutation => {
+        // Check for added nodes
+        if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+            return true;
+        }
+        
+        // Check for attribute changes on relevant elements
+        if (mutation.type === 'attributes') {
+            const target = mutation.target;
+            // Only care about certain attributes or elements
+            if (target.classList && (
+                target.classList.contains('chapter-feed__container') ||
+                target.classList.contains('manga-card') ||
+                target.classList.contains('md-card') ||
+                target.tagName === 'A'
+            )) {
+                return true;
+            }
+        }
+        
+        return false;
+    });
+    
+    if (hasRelevantMutations) {
+        scheduleRun();
+    }
+});
+
+// ================ INITIALIZATION ================
+(function () {
+    "use strict";
+
+    // Start queue handler
+    setTimeout(handle_queue, API_REQUEST_INTERVAL);
+
+    // Setup MutationObserver for dynamic content
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'href', 'style'],
+        characterData: false // Don't need text changes
+    });
+
+    // Initial run
+    scheduleRun();
 })();
