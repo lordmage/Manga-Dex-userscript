@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         MangaDex++ Enhanced v1.0.7
+// @name         MangaDex++ Enhanced
 // @namespace    https://github.com/MangaDexPP/userscript
 // @version      1.0.7
 // @description  Enhanced QOL features for MangaDex with stable controls and filtering - Optimized
@@ -62,17 +62,17 @@ const FORMAT_DETAIL = 3;
 // ================ ENHANCED UTILITIES ================
 function extractIdFromHref(href) {
     if (!href) return null;
-    
+
     // First try UUID pattern
     const m = href.match(UUID_RE);
     if (m) return m[0];
-    
+
     // Try to extract from URL path
     try {
         // Parse URL
         const url = new URL(href);
         const pathParts = url.pathname.split('/');
-        
+
         // Look for 'title' in path and get next segment
         const titleIndex = pathParts.indexOf('title');
         if (titleIndex !== -1 && titleIndex + 1 < pathParts.length) {
@@ -82,7 +82,7 @@ function extractIdFromHref(href) {
                 return potentialId;
             }
         }
-        
+
         // Fallback: look for any non-empty path segment that's not a common word
         const commonWords = ['title', 'chapter', 'manga', 'tag', 'group', 'user', 'settings', 'login', 'register'];
         for (const part of pathParts) {
@@ -100,7 +100,7 @@ function extractIdFromHref(href) {
             }
         }
     }
-    
+
     return null;
 }
 
@@ -142,11 +142,11 @@ function createControlsRow(entryID, format) {
     row.style.display = "flex";
     row.style.gap = "6px";
     row.style.marginTop = "6px";
-    
+
     // Fix: Always use flex-start for left alignment in all formats
     row.style.justifyContent = "flex-start";
 
-    row.addEventListener("click", e => {
+    row.addEventListener("click", function(e) {
         e.preventDefault();
         e.stopPropagation();
         return false;
@@ -158,21 +158,21 @@ function createControlsRow(entryID, format) {
         b.value = label;
         b.className = cls;
         b.setAttribute("entryid", entryID);
-        b.style.padding = "2px 6px"; // Optimized padding
-        b.style.borderRadius = "3px"; // Slightly smaller radius
+        b.style.padding = "2px 6px";
+        b.style.borderRadius = "3px";
         b.style.cursor = "pointer";
         b.style.background = "transparent";
-        b.style.fontSize = "14px"; // Optimized font size
+        b.style.fontSize = "14px";
         b.style.minWidth = "70px";
         b.style.height = "28px";
-        b.style.lineHeight = "24px"; // Fixed line-height (was 10px)
+        b.style.lineHeight = "24px";
         b.style.boxSizing = "border-box";
         b.style.whiteSpace = "nowrap";
         b.style.fontFamily = "inherit";
         b.style.fontWeight = "500";
         b.style.border = "1px solid rgba(255, 255, 255, 0.1)";
         b.style.transition = "all 0.15s ease";
-        b.addEventListener("click", e => {
+        b.addEventListener("click", function(e) {
             e.preventDefault();
             e.stopPropagation();
             cb(entryID);
@@ -181,12 +181,12 @@ function createControlsRow(entryID, format) {
         });
 
         // Add hover effect
-        b.addEventListener("mouseenter", () => {
+        b.addEventListener("mouseenter", function() {
             b.style.opacity = "0.9";
             b.style.transform = "translateY(-1px)";
             b.style.boxShadow = "0 2px 4px rgba(0,0,0,0.2)";
         });
-        b.addEventListener("mouseleave", () => {
+        b.addEventListener("mouseleave", function() {
             b.style.opacity = "1";
             b.style.transform = "translateY(0)";
             b.style.boxShadow = "none";
@@ -195,9 +195,9 @@ function createControlsRow(entryID, format) {
         return b;
     }
 
-    row.appendChild(mk("Read", "mangadexpp-read", id => localStorage.setItem(id, "1")));
-    row.appendChild(mk("Ignore", "mangadexpp-ignore", id => localStorage.setItem(id, "-1")));
-    row.appendChild(mk("Clear", "mangadexpp-clear", id => localStorage.removeItem(id)));
+    row.appendChild(mk("Read", "mangadexpp-read", function(id) { localStorage.setItem(id, "1"); }));
+    row.appendChild(mk("Ignore", "mangadexpp-ignore", function(id) { localStorage.setItem(id, "-1"); }));
+    row.appendChild(mk("Clear", "mangadexpp-clear", function(id) { localStorage.removeItem(id); }));
 
     return row;
 }
@@ -207,20 +207,20 @@ function insertControlsForMangaCard(card, format) {
         // Find the title link in the manga card
         const titleLink = card.querySelector("a[href*='/title/']");
         if (!titleLink) return;
-        
+
         const href = titleLink.getAttribute("href") || titleLink.href || "";
         const id = extractIdFromHref(href);
         if (!id) return;
-        
+
         // Check if controls already exist
-        if (card.querySelector(`.mangadexpp-controls input[entryid="${id}"]`)) return;
-        
+        if (card.querySelector(".mangadexpp-controls input[entryid='" + id + "']")) return;
+
         // Find where to insert controls - look for status or body
         const status = card.querySelector(".status");
         const body = card.querySelector(".manga-card-body");
-        
+
         const controls = createControlsRow(id, format);
-        
+
         if (status) {
             // Insert after status
             status.parentNode.insertBefore(controls, status.nextSibling);
@@ -240,16 +240,16 @@ function insertControlsForFeedContainer(container, format) {
     try {
         const titleLink = container.querySelector(".chapter-feed__title");
         if (!titleLink) return;
-        
+
         const href = titleLink.getAttribute("href") || titleLink.href || "";
         const id = extractIdFromHref(href);
         if (!id) return;
-        
-        if (container.querySelector(`.mangadexpp-controls input[entryid="${id}"]`)) return;
-        
+
+        if (container.querySelector(".mangadexpp-controls input[entryid='" + id + "']")) return;
+
         const titleContainer = titleLink.parentElement;
         const controls = createControlsRow(id, format);
-        
+
         // For feed format, insert after the title
         if (titleContainer) {
             titleContainer.appendChild(controls);
@@ -264,13 +264,13 @@ function insertControlsForFeedContainer(container, format) {
 function addControlsToAll(format) {
     // Handle manga cards (thumbnail format)
     if (format === FORMAT_THUMBNAIL) {
-        document.querySelectorAll(".manga-card, .md-card, .group.md-card").forEach(card => {
+        document.querySelectorAll(".manga-card, .md-card, .group.md-card").forEach(function(card) {
             insertControlsForMangaCard(card, format);
         });
     }
     // Handle feed containers (list format)
     else if (format === FORMAT_LIST) {
-        document.querySelectorAll(".chapter-feed__container").forEach(container => {
+        document.querySelectorAll(".chapter-feed__container").forEach(function(container) {
             insertControlsForFeedContainer(container, format);
         });
     }
@@ -286,7 +286,7 @@ function hasUnreadChaptersInFeedContainer(container) {
 
 function hideAllReadFeed() {
     if (!DOES_HIDE_ALL_READ) return;
-    document.querySelectorAll(".chapter-feed__container").forEach(cont => {
+    document.querySelectorAll(".chapter-feed__container").forEach(function(cont) {
         if (cont.closest(".layout-container")) {
             cont.style.display = "";
             return;
@@ -325,11 +325,11 @@ function syncColors(row, flag) {
 
 function applyFilters() {
     // Hide duplicate top control bars
-    document.querySelectorAll(".controls").forEach((c, i) => {
+    document.querySelectorAll(".controls").forEach(function(c, i) {
         if (i > 0) c.style.display = "none";
     });
 
-    document.querySelectorAll(".mangadexpp-controls").forEach(row => {
+    document.querySelectorAll(".mangadexpp-controls").forEach(function(row) {
         const inp = row.querySelector("input[entryid]");
         if (!inp) return;
         const id = inp.getAttribute("entryid");
@@ -380,20 +380,20 @@ function addTopControls() {
         const b = document.createElement("input");
         b.type = "button";
         b.value = label;
-        b.style.padding = "0 0.8em"; // Optimized padding
+        b.style.padding = "0 0.8em";
         b.style.marginLeft = "6px";
-        b.style.borderRadius = "3px"; // Smaller radius
+        b.style.borderRadius = "3px";
         b.style.cursor = "pointer";
         b.style.backgroundColor = get() ? color : "transparent";
-        b.style.fontSize = "14px"; // Optimized font size
+        b.style.fontSize = "14px";
         b.style.height = "28px";
-        b.style.lineHeight = "28px"; // Fixed line-height (was not set)
+        b.style.lineHeight = "28px";
         b.style.boxSizing = "border-box";
         b.style.fontFamily = "inherit";
         b.style.fontWeight = "500";
         b.style.border = "1px solid rgba(255, 255, 255, 0.1)";
         b.style.transition = "all 0.15s ease";
-        b.addEventListener("click", () => {
+        b.addEventListener("click", function() {
             const v = !get();
             set(v);
             b.style.backgroundColor = v ? color : "transparent";
@@ -402,12 +402,12 @@ function addTopControls() {
         });
 
         // Add hover effect to match
-        b.addEventListener("mouseenter", () => {
+        b.addEventListener("mouseenter", function() {
             b.style.opacity = "0.9";
             b.style.transform = "translateY(-1px)";
             b.style.boxShadow = "0 2px 4px rgba(0,0,0,0.2)";
         });
-        b.addEventListener("mouseleave", () => {
+        b.addEventListener("mouseleave", function() {
             b.style.opacity = "1";
             b.style.transform = "translateY(0)";
             b.style.boxShadow = "none";
@@ -416,10 +416,10 @@ function addTopControls() {
         return b;
     }
 
-    controls.appendChild(mk("Toggle Read", () => hideRead, v => hideRead = v, READ_BUTTON_COLOR));
-    controls.appendChild(mk("Toggle Ignore", () => hideIgnore, v => hideIgnore = v, IGNORE_BUTTON_COLOR));
-    controls.appendChild(mk("Toggle Unmarked", () => hideUnmarked, v => hideUnmarked = v, UNMARKED_BUTTON_COLOR));
-    if (DOES_HIDE_ALL_READ) controls.appendChild(mk("Hide All Read?", () => hideAllRead, v => hideAllRead = v, HIDE_ALL_READ_BUTTON_COLOR, hideAllReadFeed));
+    controls.appendChild(mk("Toggle Read", function() { return hideRead; }, function(v) { hideRead = v; }, READ_BUTTON_COLOR));
+    controls.appendChild(mk("Toggle Ignore", function() { return hideIgnore; }, function(v) { hideIgnore = v; }, IGNORE_BUTTON_COLOR));
+    controls.appendChild(mk("Toggle Unmarked", function() { return hideUnmarked; }, function(v) { hideUnmarked = v; }, UNMARKED_BUTTON_COLOR));
+    if (DOES_HIDE_ALL_READ) controls.appendChild(mk("Hide All Read?", function() { return hideAllRead; }, function(v) { hideAllRead = v; }, HIDE_ALL_READ_BUTTON_COLOR, hideAllReadFeed));
 }
 
 // ================ ORIGINAL FUNCTIONALITY ================
@@ -534,21 +534,21 @@ const MAX_MUTATIONS_BEFORE_IMMEDIATE = 10; // If many mutations happen, run imme
 function scheduleRun() {
     // Count this mutation
     mutationCount++;
-    
+
     // Clear any existing debounce timer
     if (debounceTimer) {
         clearTimeout(debounceTimer);
     }
-    
+
     const now = Date.now();
     const timeSinceLastRun = now - lastRunTime;
-    
+
     // If we've had many mutations in quick succession, run immediately
     if (mutationCount >= MAX_MUTATIONS_BEFORE_IMMEDIATE) {
         if (!scheduled) {
             scheduled = true;
             mutationCount = 0;
-            setTimeout(() => {
+            setTimeout(function() {
                 scheduled = false;
                 lastRunTime = Date.now();
                 try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
@@ -556,25 +556,25 @@ function scheduleRun() {
         }
         return;
     }
-    
+
     // If enough time has passed since last run, schedule immediately
     if (timeSinceLastRun >= MIN_RUN_INTERVAL && !scheduled) {
         scheduled = true;
         mutationCount = 0;
-        setTimeout(() => {
+        setTimeout(function() {
             scheduled = false;
             lastRunTime = Date.now();
             try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
         }, 0);
         return;
     }
-    
+
     // Otherwise, debounce and wait for mutations to settle
-    debounceTimer = setTimeout(() => {
+    debounceTimer = setTimeout(function() {
         if (!scheduled) {
             scheduled = true;
             mutationCount = 0;
-            setTimeout(() => {
+            setTimeout(function() {
                 scheduled = false;
                 lastRunTime = Date.now();
                 try { handleBaseUrl(window.location.href); } catch (e) { console.error(e); }
@@ -584,14 +584,14 @@ function scheduleRun() {
 }
 
 // Optimized MutationObserver configuration
-const observer = new MutationObserver((mutations) => {
+const observer = new MutationObserver(function(mutations) {
     // Check if mutations are relevant (add nodes or change attributes)
-    const hasRelevantMutations = mutations.some(mutation => {
+    const hasRelevantMutations = mutations.some(function(mutation) {
         // Check for added nodes
         if (mutation.addedNodes && mutation.addedNodes.length > 0) {
             return true;
         }
-        
+
         // Check for attribute changes on relevant elements
         if (mutation.type === 'attributes') {
             const target = mutation.target;
@@ -605,10 +605,10 @@ const observer = new MutationObserver((mutations) => {
                 return true;
             }
         }
-        
+
         return false;
     });
-    
+
     if (hasRelevantMutations) {
         scheduleRun();
     }
